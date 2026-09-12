@@ -1,0 +1,13 @@
+{
+  "name": "universal-distributed-cache-system",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Redis-inspired distributed in-memory cache built from scratch in Node.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test tests/unit/**/*.test.js"
+  }
+}
