@@ -6,9 +6,7 @@ This is a learning / portfolio systems project—not a production Redis replacem
 
 ## Current phase
 
-**Phase 1 — Single-node in-memory cache** (in progress: scaffold + `CacheStore` core)
-
-Phase 0 design docs are complete.
+**Phase 2 — TTL & Expiration** (complete: lazy + optional active sweeper)
 
 ## Docs
 
@@ -19,7 +17,7 @@ Phase 0 design docs are complete.
 ## Layout (so far)
 
 ```text
-packages/cache-core/   # in-process CacheStore
+packages/cache-core/   # in-process CacheStore (validation + TTL)
 tests/unit/            # Node.js built-in test runner
 ```
 
@@ -31,6 +29,31 @@ npm test
 
 Requires Node.js 20+.
 
+### CacheStore API (in-process)
+
+```js
+import { CacheStore } from './packages/cache-core/index.js';
+
+const cache = new CacheStore(); // optional: { now, scheduler, sweeper }
+cache.set('user:1', 'Prit');
+cache.set('session', 'abc', { ex: 60 }); // expire in 60 seconds
+cache.get('session');   // string | undefined
+cache.exists('session');
+cache.delete('session');
+cache.ttl('session');   // -2 missing, -1 no expiry, else seconds left
+
+// Active expiration (optional; still best-effort, not exact-ms)
+cache.purgeExpired(); // scan / sample now
+cache.startSweeper({ intervalMs: 1000, maxExamined: 20 });
+cache.stopSweeper();
+```
+
+Exact-millisecond expiry is **not** guaranteed.
+
+- **Lazy:** expired keys are removed on access (`get` / `exists` / `delete` / `ttl`).
+- **Active:** optional shared interval samples keys in round-robin batches — **no per-key timers**.
+- Without a sweeper, expired keys may remain in memory until touched.
+
 ## Next
 
-Phase 1 remaining: input validation (key/value limits) and fuller failure-case tests.
+Phase 3 — Eviction & memory management (LRU).
