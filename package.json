@@ -8,6 +8,10 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test tests/unit/**/*.test.js"
+    "test": "node --test tests/unit/**/*.test.js tests/integration/**/*.test.js",
+    "test:unit": "node --test tests/unit/**/*.test.js",
+    "bench:lru": "node benchmarks/lru-hit-ratio.js",
+    "start": "node apps/cache-node/bin/cache-node.js",
+    "cli": "node apps/cache-node/bin/cache-cli.js"
   }
 }

@@ -6,54 +6,75 @@ This is a learning / portfolio systems project—not a production Redis replacem
 
 ## Current phase
 
-**Phase 2 — TTL & Expiration** (complete: lazy + optional active sweeper)
+**Phase 4 — TCP Cache Server** (complete: newline protocol, multi-client server, CLI)
 
 ## Docs
 
 - [Requirements](docs/requirements.md) — commands, limits, TTL, consistency/availability, failure behavior, success metrics
 - [Architecture v1](docs/architecture-v1.md) — target diagram, phase boundaries, components, data flows
+- [Benchmarks](docs/benchmarks.md) — LRU hit-ratio methodology
 - Full roadmap: [Universal_Distributed_Cache_System_Roadmap.docx](Universal_Distributed_Cache_System_Roadmap.docx)
 
 ## Layout (so far)
 
 ```text
-packages/cache-core/   # in-process CacheStore (validation + TTL)
-tests/unit/            # Node.js built-in test runner
+packages/cache-core/   # CacheStore: validation, TTL, LRU, memory
+packages/protocol/     # newline-delimited command/response codec
+apps/cache-node/       # TCP server + CLI
+tests/unit/
+tests/integration/
+benchmarks/
+docs/
 ```
 
 ## Commands
 
 ```bash
 npm test
+npm start                          # cache-node on 127.0.0.1:6379
+npm run cli -- PING
+npm run cli -- SET user:1 Prit
+npm run cli -- GET user:1
+npm run bench:lru
 ```
 
 Requires Node.js 20+.
 
-### CacheStore API (in-process)
+### TCP protocol (learning)
 
-```js
-import { CacheStore } from './packages/cache-core/index.js';
+One command per line. Keys/values **must not contain spaces** (simple framing).
 
-const cache = new CacheStore(); // optional: { now, scheduler, sweeper }
-cache.set('user:1', 'Prit');
-cache.set('session', 'abc', { ex: 60 }); // expire in 60 seconds
-cache.get('session');   // string | undefined
-cache.exists('session');
-cache.delete('session');
-cache.ttl('session');   // -2 missing, -1 no expiry, else seconds left
+| Request | Response examples |
+|---------|-------------------|
+| `PING` | `PONG` |
+| `SET key value` / `SET key value EX 60` | `OK` |
+| `GET key` | `STR value` or `NIL` |
+| `DEL key` / `DELETE key` | `INT 1` / `INT 0` |
+| `EXISTS key` | `INT 1` / `INT 0` |
+| `TTL key` | `INT n` (`-2` missing, `-1` no expiry) |
+| bad input | `ERR message` |
 
-// Active expiration (optional; still best-effort, not exact-ms)
-cache.purgeExpired(); // scan / sample now
-cache.startSweeper({ intervalMs: 1000, maxExamined: 20 });
-cache.stopSweeper();
+Idle connections time out (default 60s). `SIGINT`/`SIGTERM` trigger graceful shutdown.
+
+```bash
+# terminal 1
+npm start -- --port 6379
+
+# terminal 2
+npm run cli -- --port 6379 -- SET user:1 Prit
+npm run cli -- --port 6379 -- GET user:1
 ```
 
-Exact-millisecond expiry is **not** guaranteed.
+Interactive: `npm run cli` then type commands; `quit` to exit.
 
-- **Lazy:** expired keys are removed on access (`get` / `exists` / `delete` / `ttl`).
-- **Active:** optional shared interval samples keys in round-robin batches — **no per-key timers**.
-- Without a sweeper, expired keys may remain in memory until touched.
+### CacheStore API (in-process)
+
+Still available for unit tests and later phases — see Phase 1–3. Options include `maxEntries`, `maxMemoryBytes`, TTL sweeper, injectable `now`.
+
+### Eviction / TTL
+
+Unchanged from Phase 2–3: lazy + optional active expiry; LRU with entry/memory caps. LFU deferred.
 
 ## Next
 
-Phase 3 — Eviction & memory management (LRU).
+Phase 5 — reusable Node.js `CacheClient` library (reconnect, timeouts, async API).

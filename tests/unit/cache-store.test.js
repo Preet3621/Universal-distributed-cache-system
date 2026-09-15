@@ -418,3 +418,199 @@ describe('CacheStore active expiration', () => {
     assert.deepEqual(cleared, [1, 2]);
   });
 });
+
+describe('CacheStore LRU eviction', () => {
+  it('rejects invalid maxEntries', () => {
+    assert.throws(
+      () => new CacheStore({ maxEntries: 0 }),
+      (err) => err instanceof CacheError && err.code === 'INVALID_OPTIONS',
+    );
+    assert.throws(
+      () => new CacheStore({ maxEntries: 1.5 }),
+      (err) => err instanceof CacheError && err.code === 'INVALID_OPTIONS',
+    );
+  });
+
+  it('evicts least-recently-used key when over capacity', () => {
+    const cache = new CacheStore({ maxEntries: 2 });
+    cache.set('a', '1');
+    cache.set('b', '2');
+    cache.set('c', '3');
+
+    assert.equal(cache.store.size, 2);
+    assert.equal(cache.get('a'), undefined);
+    assert.equal(cache.get('b'), '2');
+    assert.equal(cache.get('c'), '3');
+    assert.equal(cache.evictions, 1);
+  });
+
+  it('get updates recency so a different key is evicted', () => {
+    const cache = new CacheStore({ maxEntries: 2 });
+    cache.set('a', '1');
+    cache.set('b', '2');
+    assert.equal(cache.get('a'), '1'); // a becomes MRU; b is LRU
+
+    cache.set('c', '3');
+    assert.equal(cache.get('b'), undefined);
+    assert.equal(cache.get('a'), '1');
+    assert.equal(cache.get('c'), '3');
+    assert.equal(cache.evictions, 1);
+  });
+
+  it('overwrite does not grow size or evict', () => {
+    const cache = new CacheStore({ maxEntries: 2 });
+    cache.set('a', '1');
+    cache.set('b', '2');
+    cache.set('a', '1b');
+
+    assert.equal(cache.store.size, 2);
+    assert.equal(cache.evictions, 0);
+    assert.equal(cache.get('a'), '1b');
+  });
+
+  it('delete removes key from LRU order', () => {
+    const cache = new CacheStore({ maxEntries: 2 });
+    cache.set('a', '1');
+    cache.set('b', '2');
+    assert.equal(cache.delete('a'), true);
+
+    cache.set('c', '3');
+    assert.equal(cache.store.size, 2);
+    assert.equal(cache.evictions, 0);
+    assert.equal(cache.get('a'), undefined);
+    assert.equal(cache.get('b'), '2');
+    assert.equal(cache.get('c'), '3');
+  });
+
+  it('maxEntries of 1 keeps only the newest key', () => {
+    const cache = new CacheStore({ maxEntries: 1 });
+    cache.set('a', '1');
+    cache.set('b', '2');
+    assert.equal(cache.store.size, 1);
+    assert.equal(cache.get('a'), undefined);
+    assert.equal(cache.get('b'), '2');
+    assert.equal(cache.evictions, 1);
+  });
+
+  it('lazy expiry frees capacity without counting as eviction', () => {
+    const clock = createClock();
+    const cache = new CacheStore({ now: clock.now, maxEntries: 2 });
+
+    cache.set('a', '1', { ex: 1 });
+    cache.set('b', '2');
+    clock.advance(1000);
+
+    // Touching expired a purges it (expiration), then c fits without eviction.
+    assert.equal(cache.get('a'), undefined);
+    assert.equal(cache.expirations, 1);
+
+    cache.set('c', '3');
+    assert.equal(cache.evictions, 0);
+    assert.equal(cache.store.size, 2);
+    assert.equal(cache.get('b'), '2');
+    assert.equal(cache.get('c'), '3');
+  });
+
+  it('capacity set prefers expired LRU victim as expiration not eviction', () => {
+    const clock = createClock();
+    const cache = new CacheStore({ now: clock.now, maxEntries: 2 });
+
+    cache.set('a', '1', { ex: 1 });
+    cache.set('b', '2');
+    clock.advance(1000);
+
+    // a is still physically present and is LRU; inserting c should expire a.
+    cache.set('c', '3');
+    assert.equal(cache.store.has('a'), false);
+    assert.equal(cache.expirations, 1);
+    assert.equal(cache.evictions, 0);
+    assert.equal(cache.get('b'), '2');
+    assert.equal(cache.get('c'), '3');
+  });
+
+  it('unlimited store does not evict', () => {
+    const cache = new CacheStore();
+    cache.set('a', '1');
+    cache.set('b', '2');
+    cache.set('c', '3');
+    assert.equal(cache.maxEntries, null);
+    assert.equal(cache.store.size, 3);
+    assert.equal(cache.evictions, 0);
+  });
+});
+
+describe('CacheStore memory limit', () => {
+  it('rejects invalid maxMemoryBytes', () => {
+    assert.throws(
+      () => new CacheStore({ maxMemoryBytes: 0 }),
+      (err) => err instanceof CacheError && err.code === 'INVALID_OPTIONS',
+    );
+  });
+
+  it('tracks approximate memoryBytes for key+value UTF-8', () => {
+    const cache = new CacheStore();
+    cache.set('ab', 'cd'); // 2 + 2 = 4
+    assert.equal(cache.memoryBytes, 4);
+    cache.set('ab', 'c'); // 2 + 1 = 3
+    assert.equal(cache.memoryBytes, 3);
+    cache.delete('ab');
+    assert.equal(cache.memoryBytes, 0);
+  });
+
+  it('evicts LRU keys to free approximate memory', () => {
+    // each "kN" + "v" = 2 + 1 = 3 bytes
+    const cache = new CacheStore({ maxMemoryBytes: 6 });
+    cache.set('k0', 'v');
+    cache.set('k1', 'v');
+    assert.equal(cache.memoryBytes, 6);
+
+    cache.set('k2', 'v');
+    assert.equal(cache.store.has('k0'), false);
+    assert.equal(cache.store.size, 2);
+    assert.equal(cache.memoryBytes, 6);
+    assert.equal(cache.evictions, 1);
+  });
+
+  it('rejects a single entry larger than maxMemoryBytes', () => {
+    const cache = new CacheStore({ maxMemoryBytes: 4 });
+    assert.throws(
+      () => cache.set('key', 'huge'), // 3 + 4 = 7
+      (err) => err instanceof CacheError && err.code === 'ENTRY_TOO_LARGE',
+    );
+    assert.equal(cache.store.size, 0);
+    assert.equal(cache.memoryBytes, 0);
+  });
+
+  it('overwrite growth may evict other keys', () => {
+    const cache = new CacheStore({ maxMemoryBytes: 8 });
+    cache.set('a', '1'); // 2
+    cache.set('b', '2'); // 2, total 4
+    cache.set('a', '123456'); // a becomes 1+6=7; need evict b (2) -> 0+7=7
+    assert.equal(cache.store.has('b'), false);
+    assert.equal(cache.get('a'), '123456');
+    assert.equal(cache.memoryBytes, 7);
+    assert.equal(cache.evictions, 1);
+  });
+
+  it('expiration reduces memoryBytes', () => {
+    const clock = createClock();
+    const cache = new CacheStore({ now: clock.now });
+    cache.set('k', 'v', { ex: 1 });
+    assert.equal(cache.memoryBytes, 2);
+    clock.advance(1000);
+    assert.equal(cache.get('k'), undefined);
+    assert.equal(cache.memoryBytes, 0);
+  });
+});
+
+describe('CacheStore hit ratio', () => {
+  it('counts hits and misses on get', () => {
+    const cache = new CacheStore();
+    cache.set('k', 'v');
+    assert.equal(cache.get('k'), 'v');
+    assert.equal(cache.get('missing'), undefined);
+    assert.equal(cache.hits, 1);
+    assert.equal(cache.misses, 1);
+    assert.equal(cache.hitRatio, 0.5);
+  });
+});
