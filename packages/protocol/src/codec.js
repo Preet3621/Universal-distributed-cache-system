@@ -134,6 +134,38 @@ function assertToken(token, label) {
 }
 
 /**
+ * Serialize a parsed command to one wire line (includes trailing newline).
+ * @param {Command} cmd
+ * @returns {string}
+ */
+export function formatCommand(cmd) {
+  switch (cmd.name) {
+    case 'PING':
+      return 'PING\n';
+    case 'GET':
+    case 'DEL':
+    case 'DELETE':
+    case 'EXISTS':
+    case 'TTL':
+      return `${cmd.name} ${cmd.key}\n`;
+    case 'SET': {
+      if (cmd.ex !== undefined) {
+        if (cmd.value === '') {
+          return `SET ${cmd.key} EX ${cmd.ex}\n`;
+        }
+        return `SET ${cmd.key} ${cmd.value} EX ${cmd.ex}\n`;
+      }
+      if (cmd.value === '') {
+        return `SET ${cmd.key}\n`;
+      }
+      return `SET ${cmd.key} ${cmd.value}\n`;
+    }
+    default:
+      throw new ProtocolError('unknown command');
+  }
+}
+
+/**
  * @param {'OK' | 'PONG'} type
  * @returns {string}
  */

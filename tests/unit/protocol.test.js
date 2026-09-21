@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseCommand,
+  formatCommand,
   parseResponse,
   encodeSimple,
   encodeInt,
@@ -57,6 +58,27 @@ describe('protocol parseCommand', () => {
       value: '',
     });
   });
+});
+
+describe('protocol formatCommand', () => {
+  const lines = [
+    'PING',
+    'GET user:1',
+    'DEL user:1',
+    'SET user:1 Prit',
+    'SET session abc EX 60',
+    'SET key',
+    'SET key EX 30',
+  ];
+
+  for (const line of lines) {
+    it(`round-trips ${line}`, () => {
+      const parsed = parseCommand(line);
+      const wire = formatCommand(parsed);
+      assert.equal(wire.endsWith('\n'), true);
+      assert.deepEqual(parseCommand(wire.trim()), parsed);
+    });
+  }
 });
 
 describe('protocol encode/parse response', () => {

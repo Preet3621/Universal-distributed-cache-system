@@ -6,7 +6,7 @@ This is a learning / portfolio systems project—not a production Redis replacem
 
 ## Current phase
 
-**Phase 4 — TCP Cache Server** (complete: newline protocol, multi-client server, CLI)
+**Phase 5 — CacheClient library** (complete: async typed API, FIFO queue, timeouts, reconnect)
 
 ## Docs
 
@@ -20,6 +20,7 @@ This is a learning / portfolio systems project—not a production Redis replacem
 ```text
 packages/cache-core/   # CacheStore: validation, TTL, LRU, memory
 packages/protocol/     # newline-delimited command/response codec
+packages/client/       # CacheClient: TCP connection, async API, reconnect
 apps/cache-node/       # TCP server + CLI
 tests/unit/
 tests/integration/
@@ -67,6 +68,22 @@ npm run cli -- --port 6379 -- GET user:1
 
 Interactive: `npm run cli` then type commands; `quit` to exit.
 
+### CacheClient (programmatic)
+
+Persistent TCP connection with a FIFO command queue (safe for `Promise.all` on one client). Options include `connectTimeoutMs`, `commandTimeoutMs`, `autoReconnect`, and `maxReconnectAttempts`.
+
+```js
+import { CacheClient } from './packages/client/index.js';
+
+const client = new CacheClient({ host: '127.0.0.1', port: 6379 });
+await client.connect();
+await client.set('user:1', 'Prit');
+console.log(await client.get('user:1')); // "Prit"
+await client.close();
+```
+
+Server `ERR` responses throw `ClientError` with code `SERVER_ERROR`. Connection loss with `autoReconnect: true` (default) retries before the next command.
+
 ### CacheStore API (in-process)
 
 Still available for unit tests and later phases — see Phase 1–3. Options include `maxEntries`, `maxMemoryBytes`, TTL sweeper, injectable `now`.
@@ -77,4 +94,4 @@ Unchanged from Phase 2–3: lazy + optional active expiry; LRU with entry/memory
 
 ## Next
 
-Phase 5 — reusable Node.js `CacheClient` library (reconnect, timeouts, async API).
+Phase 6 — multiple cache nodes with baseline modulo-N routing.
