@@ -40,7 +40,7 @@ This v1 doc is aspirational for the full system. Implementation must not skip ah
 | **1** | In-process `CacheStore` (Map-backed), unit tests | Network, cluster |
 | **2–3** | TTL + eviction | TCP |
 | **4–5** | TCP server, CLI, `CacheClient` | Multi-node routing |
-| **6** | Multiple nodes, modulo-N baseline routing | Consistent hashing |
+| **6** | Multiple nodes, modulo-N baseline routing (`ClusterClient` in `packages/client`) | Consistent hashing; standalone `apps/router` |
 | **7** | Consistent hash ring + virtual nodes | Replication |
 | **8–10** | Replication, heartbeats, failover | Persistence polish |
 | **11–15** | Persistence, reliability, metrics, security controls | Docker cluster |

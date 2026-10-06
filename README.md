@@ -6,7 +6,7 @@ This is a learning / portfolio systems project—not a production Redis replacem
 
 ## Current phase
 
-**Phase 5 — CacheClient library** (complete: async typed API, FIFO queue, timeouts, reconnect)
+**Phase 6 — Multi-node modulo-N routing** (complete: `ClusterClient`, SHA-256 `hash(key) % N`, per-node pools, `NODE_UNAVAILABLE`)
 
 ## Docs
 
@@ -20,7 +20,7 @@ This is a learning / portfolio systems project—not a production Redis replacem
 ```text
 packages/cache-core/   # CacheStore: validation, TTL, LRU, memory
 packages/protocol/     # newline-delimited command/response codec
-packages/client/       # CacheClient: TCP connection, async API, reconnect
+packages/client/       # CacheClient + ClusterClient (modulo-N routing)
 apps/cache-node/       # TCP server + CLI
 tests/unit/
 tests/integration/
@@ -84,6 +84,36 @@ await client.close();
 
 Server `ERR` responses throw `ClientError` with code `SERVER_ERROR`. Connection loss with `autoReconnect: true` (default) retries before the next command.
 
+### ClusterClient (modulo-N sharding)
+
+Fixed node list; key commands route to `hash(key) % N` (SHA-256, first 4 bytes). One TCP connection pool per node. `ping()` probes **all** nodes. If the owning node is unreachable after reconnect, operations throw `ClientError` with code `NODE_UNAVAILABLE` and `details` (`nodeId`, `nodeIndex`, `key`, `cause`, …)—no silent reroute.
+
+Run multiple nodes locally (three terminals):
+
+```bash
+npm start -- --port 6371
+npm start -- --port 6372
+npm start -- --port 6373
+```
+
+```js
+import { ClusterClient } from './packages/client/index.js';
+
+const cluster = new ClusterClient({
+  nodes: [
+    { id: 'n1', host: '127.0.0.1', port: 6371 },
+    { id: 'n2', host: '127.0.0.1', port: 6372 },
+    { id: 'n3', host: '127.0.0.1', port: 6373 },
+  ],
+});
+await cluster.connect();
+await cluster.set('user:1', 'Prit');
+console.log(await cluster.get('user:1'));
+await cluster.close();
+```
+
+Changing `N` or node order remaps most keys (see `remappingFraction` / unit tests)—motivation for Phase 7 consistent hashing.
+
 ### CacheStore API (in-process)
 
 Still available for unit tests and later phases — see Phase 1–3. Options include `maxEntries`, `maxMemoryBytes`, TTL sweeper, injectable `now`.
@@ -94,4 +124,4 @@ Unchanged from Phase 2–3: lazy + optional active expiry; LRU with entry/memory
 
 ## Next
 
-Phase 6 — multiple cache nodes with baseline modulo-N routing.
+Phase 7 — consistent hash ring and virtual nodes (replace modulo-N routing).

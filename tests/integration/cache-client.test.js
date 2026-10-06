@@ -1,4 +1,4 @@
-import { describe, it, before, after } from 'node:test';
+import { describe, it, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { CacheServer } from '../../apps/cache-node/src/server.js';
@@ -73,16 +73,30 @@ describe('CacheClient integration', () => {
   });
 
   it('connect times out when the host is unreachable', async () => {
-    const client = new CacheClient({
-      host: '192.0.2.1',
-      port: 9,
-      connectTimeoutMs: 400,
-      maxReconnectAttempts: 1,
+    // Real blackhole IPs (e.g. 192.0.2.1) often fail fast with CONNECTION_ERROR
+    // depending on OS/routing; stub TCP so connect never completes or errors.
+    const createConnection = mock.method(net, 'createConnection', () => {
+      return new net.Socket();
     });
-    await assert.rejects(
-      () => client.connect(),
-      (err) => err instanceof ClientError && err.code === 'CONNECT_TIMEOUT',
-    );
+    try {
+      const client = new CacheClient({
+        host: '127.0.0.1',
+        port: 1,
+        connectTimeoutMs: 400,
+        maxReconnectAttempts: 1,
+      });
+      const started = Date.now();
+      await assert.rejects(
+        () => client.connect(),
+        (err) => err instanceof ClientError && err.code === 'CONNECT_TIMEOUT',
+      );
+      assert.ok(
+        Date.now() - started >= 350,
+        'expected connect to wait until connectTimeoutMs',
+      );
+    } finally {
+      createConnection.mock.restore();
+    }
   });
 
   it('command times out when server does not respond', async () => {
