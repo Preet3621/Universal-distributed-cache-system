@@ -12,6 +12,7 @@
     "test:unit": "node --test tests/unit/**/*.test.js",
     "bench:lru": "node benchmarks/lru-hit-ratio.js",
     "start": "node apps/cache-node/bin/cache-node.js",
-    "cli": "node apps/cache-node/bin/cache-cli.js"
+    "cli": "node apps/cache-node/bin/cache-cli.js",
+    "example:cluster": "node examples/cluster-demo.js"
   }
 }

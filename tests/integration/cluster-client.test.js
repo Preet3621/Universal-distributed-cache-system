@@ -5,7 +5,8 @@ import {
   CacheClient,
   ClusterClient,
   ClientError,
-  pickNodeIndex,
+  HashRing,
+  nodesForCount,
   ROUTING_FIXTURE_KEYS,
 } from '../../packages/client/index.js';
 
@@ -14,10 +15,11 @@ import {
  * @returns {string[]}
  */
 function keysForEachNode(nodeCount) {
+  const ring = new HashRing({ nodes: nodesForCount(nodeCount) });
   /** @type {Map<number, string>} */
   const found = new Map();
   for (const key of ROUTING_FIXTURE_KEYS) {
-    const idx = pickNodeIndex(key, nodeCount);
+    const idx = ring.lookup(key);
     if (!found.has(idx)) {
       found.set(idx, key);
     }
@@ -96,10 +98,17 @@ describe('ClusterClient integration', () => {
     await cluster.close();
   });
 
+  it('round-trips with default consistent hash routing', async () => {
+    const cluster = new ClusterClient({ nodes });
+    await cluster.set('ring-key', 'consistent');
+    assert.equal(await cluster.get('ring-key'), 'consistent');
+    await cluster.close();
+  });
+
   it('isolates data to the owning shard', async () => {
     const cluster = new ClusterClient({
       nodes,
-      hashKey: () => 1,
+      lookupNodeIndex: () => 1,
     });
     await cluster.set('shard-key', 'only-on-n1');
 
@@ -154,7 +163,7 @@ describe('ClusterClient integration', () => {
     try {
       const cluster = new ClusterClient({
         nodes: local.nodes,
-        hashKey: () => 1,
+        lookupNodeIndex: () => 1,
         maxReconnectAttempts: 1,
       });
       await cluster.set('owned-by-1', 'x');
@@ -184,7 +193,7 @@ describe('ClusterClient integration', () => {
     try {
       const cluster = new ClusterClient({
         nodes: local.nodes,
-        hashKey: (key) => (key === 'on-b' ? 1 : 0),
+        lookupNodeIndex: (key) => (key === 'on-b' ? 1 : 0),
       });
       await cluster.set('on-b', 'value-b');
       await local.servers[0].close({ timeoutMs: 2_000 });

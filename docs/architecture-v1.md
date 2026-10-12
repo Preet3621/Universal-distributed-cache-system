@@ -40,8 +40,8 @@ This v1 doc is aspirational for the full system. Implementation must not skip ah
 | **1** | In-process `CacheStore` (Map-backed), unit tests | Network, cluster |
 | **2–3** | TTL + eviction | TCP |
 | **4–5** | TCP server, CLI, `CacheClient` | Multi-node routing |
-| **6** | Multiple nodes, modulo-N baseline routing (`ClusterClient` in `packages/client`) | Consistent hashing; standalone `apps/router` |
-| **7** | Consistent hash ring + virtual nodes | Replication |
+| **6** | Multiple nodes, modulo-N baseline routing (`ClusterClient`; optional `routing: 'modulo'`) | — |
+| **7** | Consistent hash ring + virtual nodes (`packages/hashing`, default `ClusterClient` routing) | Replication; standalone `apps/router` |
 | **8–10** | Replication, heartbeats, failover | Persistence polish |
 | **11–15** | Persistence, reliability, metrics, security controls | Docker cluster |
 | **16–18** | Compose cluster, failure tests, documented benchmarks | Optional research (Raft, gossip, multi-region) |
@@ -90,7 +90,7 @@ Phase 1 may start with a smaller layout (e.g. `packages/cache-core` only) and ex
 |-----------|----------------|
 | **cache-core** | In-memory store: `SET`/`GET`/`DELETE`/`EXISTS`/`TTL`, expiration metadata, eviction. Pure logic; no networking. |
 | **protocol** | Framing, parsing, validation of newline-delimited commands and responses. Shared by server and client. |
-| **client** | Connection management, serialize commands, parse responses, timeouts/reconnect. No distributed routing initially. |
+| **client** | `CacheClient` (single node); `ClusterClient` (consistent-hash sharding). CLI: single-node default, `--nodes` / `CACHE_NODES` for cluster mode. |
 | **cache-node (app)** | Process wrapping cache-core + protocol TCP server; later persistence, metrics, replication endpoints. |
 | **hashing** | Deterministic hash, sorted ring, virtual nodes, key→node mapping, add/remove with measured key movement. |
 | **router (app)** | Uses hashing to forward client ops to the owning node; later reacts to membership changes. |

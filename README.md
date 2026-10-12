@@ -6,7 +6,7 @@ This is a learning / portfolio systems project—not a production Redis replacem
 
 ## Current phase
 
-**Phase 6 — Multi-node modulo-N routing** (complete: `ClusterClient`, SHA-256 `hash(key) % N`, per-node pools, `NODE_UNAVAILABLE`)
+**Phase 7 — Consistent hash ring** (complete: `packages/hashing`, virtual nodes, `ClusterClient` default ring routing; optional `routing: 'modulo'`)
 
 ## Docs
 
@@ -20,7 +20,8 @@ This is a learning / portfolio systems project—not a production Redis replacem
 ```text
 packages/cache-core/   # CacheStore: validation, TTL, LRU, memory
 packages/protocol/     # newline-delimited command/response codec
-packages/client/       # CacheClient + ClusterClient (modulo-N routing)
+packages/hashing/        # hashKey, HashRing (virtual nodes)
+packages/client/         # CacheClient + ClusterClient (consistent hash default)
 apps/cache-node/       # TCP server + CLI
 tests/unit/
 tests/integration/
@@ -37,6 +38,7 @@ npm run cli -- PING
 npm run cli -- SET user:1 Prit
 npm run cli -- GET user:1
 npm run bench:lru
+npm run example:cluster          # ClusterClient demo (nodes on 6371–6373)
 ```
 
 Requires Node.js 20+.
@@ -68,6 +70,16 @@ npm run cli -- --port 6379 -- GET user:1
 
 Interactive: `npm run cli` then type commands; `quit` to exit.
 
+**Cluster CLI** (uses `ClusterClient` + consistent hash):
+
+```bash
+npm run cli -- --nodes 127.0.0.1:6371,127.0.0.1:6372,127.0.0.1:6373 -- PING
+npm run cli -- --nodes 127.0.0.1:6371,127.0.0.1:6372,127.0.0.1:6373 -- SET user:1 Prit
+npm run cli -- --nodes 127.0.0.1:6371,127.0.0.1:6372,127.0.0.1:6373 -- GET user:1
+```
+
+Or set `CACHE_NODES` to the same comma-separated list. Optional ids: `n1@127.0.0.1:6371,n2@127.0.0.1:6372`.
+
 ### CacheClient (programmatic)
 
 Persistent TCP connection with a FIFO command queue (safe for `Promise.all` on one client). Options include `connectTimeoutMs`, `commandTimeoutMs`, `autoReconnect`, and `maxReconnectAttempts`.
@@ -76,7 +88,7 @@ Persistent TCP connection with a FIFO command queue (safe for `Promise.all` on o
 import { CacheClient } from './packages/client/index.js';
 
 const client = new CacheClient({ host: '127.0.0.1', port: 6379 });
-await client.connect();
+await client.connect();ʼ
 await client.set('user:1', 'Prit');
 console.log(await client.get('user:1')); // "Prit"
 await client.close();
@@ -84,9 +96,11 @@ await client.close();
 
 Server `ERR` responses throw `ClientError` with code `SERVER_ERROR`. Connection loss with `autoReconnect: true` (default) retries before the next command.
 
-### ClusterClient (modulo-N sharding)
+### ClusterClient (sharded cluster)
 
-Fixed node list; key commands route to `hash(key) % N` (SHA-256, first 4 bytes). One TCP connection pool per node. `ping()` probes **all** nodes. If the owning node is unreachable after reconnect, operations throw `ClientError` with code `NODE_UNAVAILABLE` and `details` (`nodeId`, `nodeIndex`, `key`, `cause`, …)—no silent reroute.
+Fixed node list; key commands route via a **consistent hash ring** with **128 virtual nodes per physical node** (default). Shared `hashKey` is SHA-256 → uint32. One TCP connection pool per node. `ping()` probes **all** nodes. If the owning node is unreachable after reconnect, operations throw `ClientError` with code `NODE_UNAVAILABLE` and `details` (`nodeId`, `nodeIndex`, `key`, `cause`, …)—no silent reroute.
+
+For comparison with Phase 6, pass `routing: 'modulo'` (uses `hash(key) % N`). Options: `virtualNodesPerNode` (default `128`).
 
 Run multiple nodes locally (three terminals):
 
@@ -112,7 +126,9 @@ console.log(await cluster.get('user:1'));
 await cluster.close();
 ```
 
-Changing `N` or node order remaps most keys (see `remappingFraction` / unit tests)—motivation for Phase 7 consistent hashing.
+Adding a node moves far fewer keys than modulo-N (see `tests/unit/hash-ring.test.js` vs `modulo-router.test.js`).
+
+Try the repo demo after starting three nodes: `npm run example:cluster` (see [`examples/cluster-demo.js`](examples/cluster-demo.js)).
 
 ### CacheStore API (in-process)
 
@@ -124,4 +140,4 @@ Unchanged from Phase 2–3: lazy + optional active expiry; LRU with entry/memory
 
 ## Next
 
-Phase 7 — consistent hash ring and virtual nodes (replace modulo-N routing).
+Phase 8 — async replication to replica nodes.

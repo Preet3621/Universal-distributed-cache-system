@@ -7,3 +7,8 @@ export {
   remappingFraction,
   ROUTING_FIXTURE_KEYS,
 } from './src/modulo-router.js';
+export {
+  HashRing,
+  remappingFraction as ringRemappingFraction,
+  nodesForCount,
+} from '../hashing/index.js';

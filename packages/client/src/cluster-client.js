@@ -1,8 +1,10 @@
 import { CacheClient } from './cache-client.js';
 import { ClientError } from './errors.js';
 import { hashKey, pickNodeIndex } from './modulo-router.js';
+import { HashRing } from '../../hashing/index.js';
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+const DEFAULT_VIRTUAL_NODES_PER_NODE = 128;
 const DEFAULT_COMMAND_TIMEOUT_MS = 5_000;
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = 3;
 const DEFAULT_RECONNECT_DELAY_MS = 50;
@@ -31,7 +33,10 @@ const NODE_UNAVAILABLE_CODES = new Set([
  *   autoReconnect?: boolean,
  *   maxReconnectAttempts?: number,
  *   reconnectDelayMs?: number,
+ *   routing?: 'consistent' | 'modulo',
+ *   virtualNodesPerNode?: number,
  *   hashKey?: (key: string) => number,
+ *   lookupNodeIndex?: (key: string) => number,
  * }} ClusterClientOptions
  */
 
@@ -86,7 +91,7 @@ function validateAndNormalizeNodes(nodes) {
 }
 
 /**
- * Routes key-bearing commands with hash(key) % N; one CacheClient per node.
+ * Routes key-bearing commands to one CacheClient per node (consistent hash by default).
  */
 export class ClusterClient {
   /**
@@ -107,7 +112,25 @@ export class ClusterClient {
       options.maxReconnectAttempts ?? DEFAULT_MAX_RECONNECT_ATTEMPTS;
     this.#reconnectDelayMs =
       options.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;
+    this.#routing = options.routing ?? 'consistent';
+    if (this.#routing !== 'consistent' && this.#routing !== 'modulo') {
+      throw new ClientError(
+        'INVALID_OPTIONS',
+        'routing must be "consistent" or "modulo"',
+      );
+    }
+    this.#virtualNodesPerNode =
+      options.virtualNodesPerNode ?? DEFAULT_VIRTUAL_NODES_PER_NODE;
     this.#hashFn = options.hashKey ?? hashKey;
+    this.#lookupNodeIndex = options.lookupNodeIndex ?? null;
+
+    this.#ring = new HashRing({
+      nodes: this.#nodes.map((n, nodeIndex) => ({
+        nodeIndex,
+        nodeId: n.id,
+      })),
+      virtualNodesPerNode: this.#virtualNodesPerNode,
+    });
 
     /** @type {(CacheClient | null)[]} */
     this.#clients = this.#nodes.map(() => null);
@@ -132,8 +155,20 @@ export class ClusterClient {
   /** @type {number} */
   #reconnectDelayMs;
 
+  /** @type {'consistent' | 'modulo'} */
+  #routing;
+
+  /** @type {number} */
+  #virtualNodesPerNode;
+
   /** @type {(key: string) => number} */
   #hashFn;
+
+  /** @type {((key: string) => number) | null} */
+  #lookupNodeIndex;
+
+  /** @type {HashRing} */
+  #ring;
 
   /** @type {(CacheClient | null)[]} */
   #clients;
@@ -255,8 +290,33 @@ export class ClusterClient {
    * @param {(client: CacheClient) => Promise<unknown>} fn
    */
   async #routeKeyed(key, command, fn) {
-    const nodeIndex = pickNodeIndex(key, this.#nodes.length, this.#hashFn);
+    const nodeIndex = this.#resolveNodeIndex(key);
     return this.#withClient(nodeIndex, fn, { key, command });
+  }
+
+  /**
+   * @param {string} key
+   * @returns {number}
+   */
+  #resolveNodeIndex(key) {
+    if (this.#lookupNodeIndex) {
+      const index = this.#lookupNodeIndex(key);
+      if (
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index >= this.#nodes.length
+      ) {
+        throw new ClientError(
+          'INVALID_OPTIONS',
+          'lookupNodeIndex returned out-of-range index',
+        );
+      }
+       return index;
+    }
+    if (this.#routing === 'modulo') {
+      return pickNodeIndex(key, this.#nodes.length, this.#hashFn);
+    }
+    return this.#ring.lookup(key);
   }
 
   /**

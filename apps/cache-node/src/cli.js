@@ -1,16 +1,38 @@
 import readline from 'node:readline';
-import { CacheClient, ClientError } from '../../../packages/client/index.js';
+import {
+  CacheClient,
+  ClusterClient,
+  ClientError,
+} from '../../../packages/client/index.js';
 import { parseResponse } from '../../../packages/protocol/index.js';
+import { parseNodeList } from './parse-nodes.js';
+import { runClusterCommand } from './cluster-command.js';
+
+/**
+ * @typedef {import('./parse-nodes.js').ParsedNodeAddress} ParsedNodeAddress
+ */
 
 /**
  * Minimal interactive / one-shot TCP CLI for the cache protocol.
- * @param {{ host?: string, port?: number, command?: string }} options
+ * @param {{
+ *   host?: string,
+ *   port?: number,
+ *   nodes?: ParsedNodeAddress[],
+ *   command?: string,
+ * }} options
  */
 export async function runCli(options = {}) {
-  const host = options.host ?? '127.0.0.1';
-  const port = options.port ?? 6379;
+  const clusterMode = options.nodes !== undefined && options.nodes.length > 0;
 
-  const client = new CacheClient({ host, port });
+  /** @type {CacheClient | ClusterClient} */
+  const client = clusterMode
+    ? new ClusterClient({ nodes: options.nodes })
+    : new CacheClient({
+        host: options.host ?? '127.0.0.1',
+        port: options.port ?? 6379,
+      });
+
+  const prompt = clusterMode ? 'cluster> ' : 'cache> ';
 
   if (options.command) {
     try {
@@ -30,7 +52,7 @@ export async function runCli(options = {}) {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: 'cache> ',
+    prompt,
   });
 
   rl.prompt();
@@ -57,10 +79,14 @@ export async function runCli(options = {}) {
 }
 
 /**
- * @param {CacheClient} client
+ * @param {CacheClient | ClusterClient} client
  * @param {string} commandLine
  */
 async function runOneShot(client, commandLine) {
+  if (client instanceof ClusterClient) {
+    await runClusterCommand(client, commandLine);
+    return;
+  }
   const raw = await client.executeRaw(commandLine);
   printResponse(raw);
 }
@@ -107,3 +133,5 @@ function wrapClientError(err) {
   }
   return new Error(String(err));
 }
+
+export { parseNodeList };
