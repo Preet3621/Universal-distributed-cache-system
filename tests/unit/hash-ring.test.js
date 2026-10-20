@@ -45,6 +45,42 @@ describe('HashRing lookup', () => {
   });
 });
 
+describe('HashRing lookupReplicaIndices', () => {
+  it('starts with primary from lookup', () => {
+    const ring = new HashRing({ nodes: nodesForCount(3) });
+    const key = 'user:42';
+    const indices = ring.lookupReplicaIndices(key, 3);
+    assert.equal(indices[0], ring.lookup(key));
+    assert.equal(new Set(indices).size, indices.length);
+  });
+
+  it('returns all three nodes when replicationFactor is 3', () => {
+    const ring = new HashRing({ nodes: nodesForCount(3) });
+    for (const key of ROUTING_FIXTURE_KEYS.slice(0, 20)) {
+      const indices = ring.lookupReplicaIndices(key, 3);
+      assert.deepEqual([...indices].sort(), [0, 1, 2]);
+    }
+  });
+
+  it('caps at node count and returns two nodes for RF=2', () => {
+    const ring = new HashRing({ nodes: nodesForCount(3) });
+    const indices = ring.lookupReplicaIndices('k1', 2);
+    assert.equal(indices.length, 2);
+    assert.equal(indices[0], ring.lookup('k1'));
+  });
+
+  it('returns single index on one-node ring', () => {
+    const ring = new HashRing({ nodes: nodesForCount(1) });
+    assert.deepEqual(ring.lookupReplicaIndices('x', 3), [0]);
+  });
+
+  it('rejects invalid replicationFactor', () => {
+    const ring = new HashRing({ nodes: nodesForCount(2) });
+    assert.throws(() => ring.lookupReplicaIndices('k', 0), RangeError);
+    assert.throws(() => ring.lookupReplicaIndices('k', 1.5), RangeError);
+  });
+});
+
 describe('HashRing remapping vs modulo', () => {
   it('moves fewer keys than modulo when adding a fourth node', () => {
     const ring3 = new HashRing({ nodes: nodesForCount(3) });

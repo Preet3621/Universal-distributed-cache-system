@@ -7,6 +7,7 @@ import {
   encodeNil,
   encodeErr,
 } from '../../../packages/protocol/index.js';
+import { isPrimaryForKey } from '../../../packages/replication/index.js';
 
 /**
  * Execute a parsed protocol command against a CacheStore.
@@ -54,4 +55,70 @@ export function executeCommand(store, command) {
     }
     return encodeErr('internal error');
   }
+}
+
+/**
+ * Apply an internal replication command (no fan-out).
+ * @param {import('../../cache-core/index.js').CacheStore} store
+ * @param {import('../../protocol/src/codec.js').ReplCommand} command
+ * @returns {string}
+ */
+export function executeReplCommand(store, command) {
+  if (command.name !== 'REPL') {
+    return encodeErr('internal error');
+  }
+  const inner = command.inner;
+  try {
+    if (inner.name === 'SET') {
+      const opts = inner.ex !== undefined ? { ex: inner.ex } : {};
+      store.set(inner.key, inner.value, opts);
+      return encodeSimple('OK');
+    }
+    if (inner.name === 'DEL' || inner.name === 'DELETE') {
+      const removed = store.delete(inner.key);
+      return encodeInt(removed ? 1 : 0);
+    }
+    return encodeErr('unknown command');
+  } catch (err) {
+    if (err instanceof CacheError || err instanceof ProtocolError) {
+      return encodeErr(err.message);
+    }
+    return encodeErr('internal error');
+  }
+}
+
+/**
+ * @param {import('../../cache-core/index.js').CacheStore} store
+ * @param {import('../../protocol/src/codec.js').Command} command
+ * @param {{
+ *   replicationEngine?: import('../../replication/index.js').ReplicationEngine | null,
+ *   replicationConfig?: import('../../replication/src/cluster-config.js').ClusterReplicationConfig | null,
+ * }} [ctx]
+ * @returns {string}
+ */
+export function dispatchCommand(store, command, ctx = {}) {
+  if (command.name === 'REPL') {
+    return executeReplCommand(store, command);
+  }
+
+  const response = executeCommand(store, command);
+
+  const engine = ctx.replicationEngine;
+  const config = ctx.replicationConfig;
+  if (engine && config) {
+    if (command.name === 'SET') {
+      if (isPrimaryForKey(config.ring, command.key, config.myNodeIndex)) {
+        engine.replicateSet(command.key, {
+          value: command.value,
+          ex: command.ex,
+        });
+      }
+    } else if (command.name === 'DEL' || command.name === 'DELETE') {
+      if (isPrimaryForKey(config.ring, command.key, config.myNodeIndex)) {
+        engine.replicateDel(command.key);
+      }
+    }
+  }
+
+  return response;
 }

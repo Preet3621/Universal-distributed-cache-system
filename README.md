@@ -6,12 +6,13 @@ This is a learning / portfolio systems project—not a production Redis replacem
 
 ## Current phase
 
-**Phase 7 — Consistent hash ring** (complete: `packages/hashing`, virtual nodes, `ClusterClient` default ring routing; optional `routing: 'modulo'`)
+**Phase 8 — Async replication** (complete: `packages/replication`, `REPL` wire commands, primary-only ack, RF=3 default on clustered nodes)
 
 ## Docs
 
 - [Requirements](docs/requirements.md) — commands, limits, TTL, consistency/availability, failure behavior, success metrics
 - [Architecture v1](docs/architecture-v1.md) — target diagram, phase boundaries, components, data flows
+- [Replication](docs/replication.md) — RF, REPL protocol, node flags, limits
 - [Benchmarks](docs/benchmarks.md) — LRU hit-ratio methodology
 - Full roadmap: [Universal_Distributed_Cache_System_Roadmap.docx](Universal_Distributed_Cache_System_Roadmap.docx)
 
@@ -20,7 +21,8 @@ This is a learning / portfolio systems project—not a production Redis replacem
 ```text
 packages/cache-core/   # CacheStore: validation, TTL, LRU, memory
 packages/protocol/     # newline-delimited command/response codec
-packages/hashing/        # hashKey, HashRing (virtual nodes)
+packages/hashing/        # hashKey, HashRing (virtual nodes, replica walk)
+packages/replication/    # async fan-out, cluster config, per-peer stats
 packages/client/         # CacheClient + ClusterClient (consistent hash default)
 apps/cache-node/       # TCP server + CLI
 tests/unit/
@@ -88,7 +90,7 @@ Persistent TCP connection with a FIFO command queue (safe for `Promise.all` on o
 import { CacheClient } from './packages/client/index.js';
 
 const client = new CacheClient({ host: '127.0.0.1', port: 6379 });
-await client.connect();ʼ
+await client.connect();
 await client.set('user:1', 'Prit');
 console.log(await client.get('user:1')); // "Prit"
 await client.close();
@@ -102,7 +104,17 @@ Fixed node list; key commands route via a **consistent hash ring** with **128 vi
 
 For comparison with Phase 6, pass `routing: 'modulo'` (uses `hash(key) % N`). Options: `virtualNodesPerNode` (default `128`).
 
-Run multiple nodes locally (three terminals):
+Run multiple nodes locally (three terminals). For **replication**, each node needs the same cluster list and its own `--node-id` (see [Replication](docs/replication.md)):
+
+```bash
+CLUSTER="n1@127.0.0.1:6371,n2@127.0.0.1:6372,n3@127.0.0.1:6373"
+
+npm start -- --port 6371 --node-id n1 --cluster-nodes "$CLUSTER"
+npm start -- --port 6372 --node-id n2 --cluster-nodes "$CLUSTER"
+npm start -- --port 6373 --node-id n3 --cluster-nodes "$CLUSTER"
+```
+
+Without cluster flags, nodes only shard (Phase 7):
 
 ```bash
 npm start -- --port 6371
@@ -140,4 +152,4 @@ Unchanged from Phase 2–3: lazy + optional active expiry; LRU with entry/memory
 
 ## Next
 
-Phase 8 — async replication to replica nodes.
+Phase 9 — membership and heartbeats.

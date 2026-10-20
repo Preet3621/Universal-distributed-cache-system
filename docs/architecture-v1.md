@@ -41,8 +41,9 @@ This v1 doc is aspirational for the full system. Implementation must not skip ah
 | **2–3** | TTL + eviction | TCP |
 | **4–5** | TCP server, CLI, `CacheClient` | Multi-node routing |
 | **6** | Multiple nodes, modulo-N baseline routing (`ClusterClient`; optional `routing: 'modulo'`) | — |
-| **7** | Consistent hash ring + virtual nodes (`packages/hashing`, default `ClusterClient` routing) | Replication; standalone `apps/router` |
-| **8–10** | Replication, heartbeats, failover | Persistence polish |
+| **7** | Consistent hash ring + virtual nodes (`packages/hashing`, default `ClusterClient` routing) | Standalone `apps/router` |
+| **8** | Async replication (`packages/replication`, `REPL` commands, RF default 3) | Heartbeats, failover |
+| **9–10** | Membership / heartbeats, failover | Persistence polish |
 | **11–15** | Persistence, reliability, metrics, security controls | Docker cluster |
 | **16–18** | Compose cluster, failure tests, documented benchmarks | Optional research (Raft, gossip, multi-region) |
 

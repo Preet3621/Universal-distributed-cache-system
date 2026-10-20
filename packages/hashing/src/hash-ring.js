@@ -33,11 +33,15 @@ export class HashRing {
     }
 
     this.#hashFn = options.hashFn ?? hashKey;
+    this.#nodeCount = nodes.length;
     this.#entries = buildRingEntries(nodes, virtualNodesPerNode, this.#hashFn);
   }
 
   /** @type {(key: string) => number} */
   #hashFn;
+
+  /** @type {number} */
+  #nodeCount;
 
   /** @type {Array<{ hash: number, nodeIndex: number }>} */
   #entries;
@@ -50,6 +54,48 @@ export class HashRing {
     if (this.#entries.length === 0) {
       throw new RangeError('empty hash ring');
     }
+    const start = this.#ringStartIndex(key);
+    return this.#entries[start].nodeIndex;
+  }
+
+  /**
+   * Primary first, then distinct replicas clockwise on the ring.
+   * @param {string} key
+   * @param {number} replicationFactor
+   * @returns {number[]}
+   */
+  lookupReplicaIndices(key, replicationFactor) {
+    if (
+      !Number.isInteger(replicationFactor) ||
+      replicationFactor < 1
+    ) {
+      throw new RangeError('replicationFactor must be a positive integer');
+    }
+    const target = Math.min(replicationFactor, this.#nodeCount);
+    if (this.#entries.length === 0) {
+      return [];
+    }
+
+    const start = this.#ringStartIndex(key);
+    /** @type {number[]} */
+    const result = [];
+    const seen = new Set();
+
+    for (let i = 0; i < this.#entries.length && result.length < target; i++) {
+      const entry = this.#entries[(start + i) % this.#entries.length];
+      if (!seen.has(entry.nodeIndex)) {
+        seen.add(entry.nodeIndex);
+        result.push(entry.nodeIndex);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * @param {string} key
+   * @returns {number}
+   */
+  #ringStartIndex(key) {
     const h = this.#hashFn(key);
     let lo = 0;
     let hi = this.#entries.length;
@@ -62,9 +108,9 @@ export class HashRing {
       }
     }
     if (lo >= this.#entries.length) {
-      return this.#entries[0].nodeIndex;
+      return 0;
     }
-    return this.#entries[lo].nodeIndex;
+    return lo;
   }
 }
 

@@ -5,6 +5,7 @@
  *   SET key value
  *   SET key value EX seconds
  *   GET key | DEL key | DELETE key | EXISTS key | TTL key | PING
+ *   REPL SET key value [EX seconds] | REPL DEL key   (node-to-node replication)
  *
  * Values/keys must not contain spaces or newlines (learning protocol).
  *
@@ -31,7 +32,9 @@ export class ProtocolError extends Error {
  * @typedef {{ name: 'PING' }} PingCommand
  * @typedef {{ name: 'GET' | 'DEL' | 'DELETE' | 'EXISTS' | 'TTL', key: string }} KeyCommand
  * @typedef {{ name: 'SET', key: string, value: string, ex?: number }} SetCommand
- * @typedef {PingCommand | KeyCommand | SetCommand} Command
+ * @typedef {{ name: 'DEL' | 'DELETE', key: string }} DelCommand
+ * @typedef {{ name: 'REPL', inner: SetCommand | DelCommand }} ReplCommand
+ * @typedef {PingCommand | KeyCommand | SetCommand | ReplCommand} Command
  */
 
 /**
@@ -76,9 +79,38 @@ export function parseCommand(line) {
     case 'SET':
       return parseSet(parts);
 
+    case 'REPL':
+      return parseRepl(parts);
+
     default:
       throw new ProtocolError(`unknown command '${parts[0]}'`);
   }
+}
+
+/**
+ * @param {string[]} parts full split including REPL prefix
+ * @returns {ReplCommand}
+ */
+function parseRepl(parts) {
+  if (parts.length < 2) {
+    throw new ProtocolError('wrong number of arguments for REPL');
+  }
+  const innerName = parts[1].toUpperCase();
+  if (innerName === 'SET') {
+    const innerParts = ['SET', ...parts.slice(2)];
+    return { name: 'REPL', inner: parseSet(innerParts) };
+  }
+  if (innerName === 'DEL' || innerName === 'DELETE') {
+    if (parts.length !== 3) {
+      throw new ProtocolError(`wrong number of arguments for REPL ${innerName}`);
+    }
+    assertToken(parts[2], 'key');
+    return {
+      name: 'REPL',
+      inner: { name: innerName === 'DELETE' ? 'DELETE' : 'DEL', key: parts[2] },
+    };
+  }
+  throw new ProtocolError(`unknown REPL subcommand '${parts[1]}'`);
 }
 
 /**
@@ -163,6 +195,22 @@ export function formatCommand(cmd) {
     default:
       throw new ProtocolError('unknown command');
   }
+}
+
+/**
+ * Serialize an inner SET/DEL for replication (includes trailing newline).
+ * @param {SetCommand | DelCommand} inner
+ * @returns {string}
+ */
+export function formatReplCommand(inner) {
+  if (inner.name === 'SET') {
+    const body = formatCommand(inner).trimEnd();
+    return `REPL ${body}\n`;
+  }
+  if (inner.name === 'DEL' || inner.name === 'DELETE') {
+    return `REPL DEL ${inner.key}\n`;
+  }
+  throw new ProtocolError('unknown REPL inner command');
 }
 
 /**

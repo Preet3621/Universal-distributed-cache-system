@@ -2,6 +2,7 @@ export {
   ProtocolError,
   parseCommand,
   formatCommand,
+  formatReplCommand,
   parseResponse,
   encodeSimple,
   encodeInt,

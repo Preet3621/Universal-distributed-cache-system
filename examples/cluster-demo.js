@@ -2,7 +2,8 @@
 /**
  * Demo: ClusterClient against locally running cache-node processes.
  *
- * Start nodes first (three terminals):
+ * Start nodes first (three terminals). For async replication (Phase 8), add
+ * --node-id and --cluster-nodes on each process — see docs/replication.md.
  *   npm start -- --port 6371
  *   npm start -- --port 6372
  *   npm start -- --port 6373

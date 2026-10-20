@@ -1,7 +1,11 @@
 import net from 'node:net';
 import { CacheStore } from '../../../packages/cache-core/index.js';
 import { parseCommand, encodeErr } from '../../../packages/protocol/index.js';
-import { executeCommand } from './command-handler.js';
+import {
+  buildClusterReplicationConfig,
+  ReplicationEngine,
+} from '../../../packages/replication/index.js';
+import { dispatchCommand } from './command-handler.js';
 
 /**
  * TCP cache node: newline-delimited commands, one CacheStore per process.
@@ -15,6 +19,13 @@ export class CacheServer {
    *   maxLineBytes?: number,
    *   store?: CacheStore,
    *   storeOptions?: ConstructorParameters<typeof CacheStore>[0],
+   *   replication?: {
+   *     nodeId: string,
+   *     nodes: Array<{ id?: string, host: string, port: number }>,
+   *     replicationFactor?: number,
+   *     virtualNodesPerNode?: number,
+   *     clientOptions?: ConstructorParameters<typeof CacheClient>[0],
+   *   },
    * }} [options]
    */
   constructor(options = {}) {
@@ -28,6 +39,13 @@ export class CacheServer {
     /** @type {Set<net.Socket>} */
     this.#sockets = new Set();
     this.#closing = false;
+    /** @type {import('../../../packages/replication/src/cluster-config.js').ClusterReplicationConfig | null} */
+    this.#replicationConfig = null;
+    /** @type {ReplicationEngine | null} */
+    this.#replicationEngine = null;
+    if (options.replication) {
+      this.#initReplication(options.replication);
+    }
   }
 
   /** @type {net.Server | null} */
@@ -38,6 +56,45 @@ export class CacheServer {
 
   /** @type {boolean} */
   #closing;
+
+  /** @type {import('../../../packages/replication/src/cluster-config.js').ClusterReplicationConfig | null} */
+  #replicationConfig;
+
+  /** @type {ReplicationEngine | null} */
+  #replicationEngine;
+
+  /**
+   * Enable replication after listen when cluster addresses are known (tests).
+   * @param {NonNullable<ConstructorParameters<typeof CacheServer>[0]>['replication'] & { clientOptions?: import('../../../packages/client/index.js').CacheClient extends new (o?: infer O) => unknown ? O : never }} replication
+   */
+  enableReplication(replication) {
+    if (!replication) {
+      throw new Error('replication options required');
+    }
+    this.#initReplication(replication);
+  }
+
+  /**
+   * @param {NonNullable<ConstructorParameters<typeof CacheServer>[0]>['replication']} replication
+   */
+  #initReplication(replication) {
+    this.#replicationConfig = buildClusterReplicationConfig({
+      nodeId: replication.nodeId,
+      nodes: replication.nodes,
+      replicationFactor: replication.replicationFactor,
+      virtualNodesPerNode: replication.virtualNodesPerNode,
+    });
+    this.#replicationEngine = new ReplicationEngine(this.#replicationConfig, {
+      clientOptions: replication.clientOptions,
+    });
+  }
+
+  /**
+   * @returns {{ dropped: number, peers: Record<string, unknown> } | null}
+   */
+  getReplicationStats() {
+    return this.#replicationEngine?.stats.snapshot() ?? null;
+  }
 
   /**
    * @returns {Promise<{ host: string, port: number }>}
@@ -87,6 +144,13 @@ export class CacheServer {
     this.#server = null;
     if (!server) {
       return;
+    }
+
+    const engine = this.#replicationEngine;
+    this.#replicationEngine = null;
+    this.#replicationConfig = null;
+    if (engine) {
+      await engine.close();
     }
 
     await new Promise((resolve, reject) => {
@@ -154,7 +218,10 @@ export class CacheServer {
         let response;
         try {
           const command = parseCommand(line);
-          response = executeCommand(this.store, command);
+          response = dispatchCommand(this.store, command, {
+            replicationEngine: this.#replicationEngine,
+            replicationConfig: this.#replicationConfig,
+          });
         } catch (err) {
           response = encodeErr(err instanceof Error ? err.message : 'bad request');
         }
